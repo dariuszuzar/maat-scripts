@@ -1,122 +1,160 @@
 <!DOCTYPE html>
-<meta charset="utf-8">
-<style>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Crime Scene Hotspots</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        .node {
+            cursor: pointer;
+        }
 
-.node {
-  cursor: pointer;
-}
+        .node:hover {
+            stroke: #000;
+            stroke-width: 1.5px;
+        }
 
-.node:hover {
-  stroke: #000;
-  stroke-width: 1.5px;
-}
+        .node--root {
+            stroke: #777;
+            stroke-width: 2px;
+        }
 
-.node--root {
-  stroke: #777;
-  stroke-width: 2px;
-}
+        .node--leaf {
+            fill: white;
+            stroke: #777;
+            stroke-width: 1px;
+        }
 
-.node--leaf {
-  fill: white;
-  stroke: #777;
-  stroke-width: 1px;
-}
+        .label {
+            font: 14px "Helvetica Neue", Helvetica, Arial, sans-serif;
+            text-anchor: middle;
+            fill: white;
+        }
 
-.label {
-  font: 14px "Helvetica Neue", Helvetica, Arial, sans-serif;
-  text-anchor: middle;
-  fill: white;
-  //text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, -1px 0 0 #fff, 0 -1px 0 #fff;
-}
+        .label,
+        .node--root,
+        .node--leaf {
+            pointer-events: auto;
+        }
 
-.label,
-.node--root,
-.node--leaf {
-  pointer-events: none;
-}
-
-</style>
+        #tooltip {
+            position: absolute;
+            opacity: 0;
+            background: #fff;
+            border: 1px solid #000;
+            padding: 5px;
+            pointer-events: none;
+        }
+    </style>
+</head>
 <body>
-<script src="d3/d3.min.js"></script>
-<script>
+    <div id="tooltip"></div>
+    <script>
+        const margin = 10,
+            outerDiameter = 960,
+            innerDiameter = outerDiameter - margin - margin;
 
-var margin = 10,
-    outerDiameter = 960,
-    innerDiameter = outerDiameter - margin - margin;
+        const x = d3.scaleLinear().range([0, innerDiameter]);
+        const y = d3.scaleLinear().range([0, innerDiameter]);
 
-var x = d3.scale.linear()
-    .range([0, innerDiameter]);
+        const color = d3.scaleLinear()
+            .domain([-1, 5])
+            .range(["hsl(185,60%,99%)", "hsl(187,40%,70%)"])
+            .interpolate(d3.interpolateHcl);
 
-var y = d3.scale.linear()
-    .range([0, innerDiameter]);
+        const pack = d3.pack()
+            .size([innerDiameter, innerDiameter])
+            .padding(2);
 
-var color = d3.scale.linear()
-    .domain([-1, 5])
-    .range(["hsl(185,60%,99%)", "hsl(187,40%,70%)"])
-    .interpolate(d3.interpolateHcl);
+        const svg = d3.select("body").append("svg")
+            .attr("width", outerDiameter)
+            .attr("height", outerDiameter)
+          .append("g")
+            .attr("transform", `translate(${margin},${margin})`);
 
-var pack = d3.layout.pack()
-    .padding(2)
-    .size([innerDiameter, innerDiameter])
-    .value(function(d) { return d.size; })
+        const tooltip = d3.select("#tooltip");
 
-var svg = d3.select("body").append("svg")
-    .attr("width", outerDiameter)
-    .attr("height", outerDiameter)
-  .append("g")
-    .attr("transform", "translate(" + margin + "," + margin + ")");
+        d3.json("hotspots.json").then(function(rootData) {
+            let root = d3.hierarchy(rootData)
+                .sum(d => d.size) 
+                .sort((a, b) => b.value - a.value);
 
-d3.json("hotspots.json", function(error, root) {
-  var focus = root,
-      nodes = pack.nodes(root);
+            const nodes = pack(root).descendants();
+            let focus = root;
 
-  svg.append("g").selectAll("circle")
-      .data(nodes)
-    .enter().append("circle")
-      .attr("class", function(d) { return d.parent ? d.children ? "node" : "node node--leaf" : "node node--root"; })
-      .attr("transform", function(d) { return "translate(" + d.x + "," + d.y + ")"; })
-      .attr("r", function(d) { return d.r; })
-      .style("fill", function(d) { return d.weight > 0.0 ? "darkred" :
-      d.children ? color(d.depth) : "WhiteSmoke"; })
-      .style("fill-opacity", function(d) { return d.weight; })
-      .on("click", function(d) { return zoom(focus == d ? root : d); });
+            // Circles
+            svg.append("g")
+                .selectAll("circle")
+                .data(nodes)
+                .join("circle")
+                .attr("class", d => d.parent ? (d.children ? "node" : "node node--leaf") : "node node--root")
+                .attr("transform", d => `translate(${d.x},${d.y})`)
+                .attr("r", d => d.r)
+                //.style("fill", d => d.children ? color(d.depth) : d.data.weight > 0.0 ? "darkred" : "WhiteSmoke")
+                .style("fill", d => d.data.weight > 0.0 ? "darkred" : d.children ? color(d.depth) : "WhiteSmoke")
+                .style("fill-opacity", d => d.data.weight || 1)
+                .on("click", (event, d) => zoom(event, focus === d ? root : d))
+                .on("mouseover", (event, d) => {
+                    tooltip.style("opacity", 1)
+                        .html(`<strong>${d.data.name}</strong><br>Size: ${d.data.size}<br>Weight: ${d.data.weight}`)
+                        .style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY - 10) + "px");
+                })
+                .on("mousemove", (event) => {
+                    tooltip.style("left", (event.pageX + 10) + "px")
+                           .style("top", (event.pageY - 10) + "px");
+                })
+                .on("mouseout", () => {
+                    tooltip.style("opacity", 0);
+                });
 
-  svg.append("g").selectAll("text")
-      .data(nodes)
-    .enter().append("text")
-      .attr("class", "label")
-      .attr("transform", function(d) { return "translate(" + d.x + "," + d.y + ")"; })
-      .style("fill-opacity", function(d) { return d.parent === root ? 1 : 0; })
-      .style("display", function(d) { return d.parent === root ? null : "none"; })
-      .text(function(d) { return d.name; });
+            // Labels
+            // svg.append("g")
+            //     .selectAll("text")
+            //     .data(nodes)
+            //     .join("text")
+            //     .attr("class", "label")
+            //     .attr("transform", d => `translate(${d.x},${d.y})`)
+            //     .style("fill-opacity", d => d.parent === root ? 1 : 0)
+            //     .style("display", d => d.parent === root ? null : "none")
+            //     .text(d => d.data.name);
 
-  d3.select(window)
-      .on("click", function() { zoom(root); });
+            d3.select(window).on("click", (event) => {
+              if (focus !== root) zoom(event, root);
+            });
 
-  function zoom(d, i) {
-    var focus0 = focus;
-    focus = d;
+            function zoom(event, d) {
+              if (focus === d) return; // Prevent re-zooming to the same node
 
-    var k = innerDiameter / d.r / 2;
-    x.domain([d.x - d.r, d.x + d.r]);
-    y.domain([d.y - d.r, d.y + d.r]);
-    d3.event.stopPropagation();
+              focus = d;
 
-    var transition = d3.selectAll("text,circle").transition()
-        .duration(d3.event.altKey ? 7500 : 750)
-        .attr("transform", function(d) { return "translate(" + x(d.x) + "," + y(d.y) + ")"; });
+              const k = innerDiameter / d.r / 2;
+              x.domain([d.x - d.r, d.x + d.r]);
+              y.domain([d.y - d.r, d.y + d.r]);
 
-    transition.filter("circle")
-        .attr("r", function(d) { return k * d.r; });
+              const transition = d3.selectAll("text,circle")
+                  .transition()
+                  .duration(750)
+                  .attr("transform", d => `translate(${x(d.x)},${y(d.y)})`);
 
-    transition.filter("text")
-      .filter(function(d) { return d.parent === focus || d.parent === focus0; })
-        .style("fill-opacity", function(d) { return d.parent === focus ? 1 : 0; })
-        .each("start", function(d) { if (d.parent === focus) this.style.display = "inline"; })
-        .each("end", function(d) { if (d.parent !== focus) this.style.display = "none"; });
-  }}
-);
+              transition.filter("circle")
+                  .attr("r", d => k * d.r);
 
-d3.select(self.frameElement).style("height", outerDiameter + "px");
+              transition.filter("text")
+                  .filter(d => d.parent === focus)
+                  .style("fill-opacity", 1)
+                  .style("display", "inline");
 
-</script>
+              transition.filter("text")
+                  .filter(d => d.parent !== focus)
+                  .style("fill-opacity", 0)
+                  .style("display", "none");
+
+              event.stopPropagation(); 
+            }
+        });
+
+        d3.select(self.frameElement).style("height", outerDiameter + "px");
+    </script>
+</body>
+</html>
